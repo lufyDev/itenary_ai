@@ -1,5 +1,9 @@
+import json
 from graph import graph
 
+print("\n" + "🚀" * 30)
+print("  ITINERARY AI — Starting Pipeline")
+print("🚀" * 30)
 
 initial_state = {
     "trip": {"title": "Jibhi"},
@@ -37,6 +41,17 @@ initial_state = {
     "repair_instructions": None,
 }
 
+print(f"\n📌 Trip: {initial_state['trip']['title']}")
+print(f"👥 Group size: {initial_state['aggregated_data']['groupSize']}")
+print(f"💰 Budget: ₹{initial_state['aggregated_data']['budget']['min']} – ₹{initial_state['aggregated_data']['budget']['max']}")
+
 result = graph.invoke(initial_state)
 
-print(result["itinerary"])
+print("\n" + "=" * 60)
+print("🏁 FINAL RESULT")
+print("=" * 60)
+
+if result["itinerary"]:
+    print(json.dumps(result["itinerary"], indent=2))
+else:
+    print("❌ Failed to generate an itinerary.")

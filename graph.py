@@ -18,8 +18,10 @@ workflow.set_entry_point("planner")
 def planner_router(state):
 
     if state["itinerary"] is None:
+        print("\n  🔀 Router: planner → tool (no itinerary yet, fetching knowledge)")
         return "tool"
 
+    print("\n  🔀 Router: planner → critic (itinerary ready for review)")
     return "critic"
 
 
@@ -34,8 +36,10 @@ workflow.add_edge("tool", "planner")
 def critic_router(state):
 
     if state["repair_instructions"]:
+        print("\n  🔀 Router: critic → planner (repairs needed, looping back)")
         return "planner"
 
+    print("\n  🔀 Router: critic → END (all good, finishing!)")
     return END
 
 
