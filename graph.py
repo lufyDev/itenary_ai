@@ -18,7 +18,7 @@ workflow.set_entry_point("planner")
 def planner_router(state):
 
     if state["itinerary"] is None:
-        print("\n  🔀 Router: planner → tool (no itinerary yet, fetching knowledge)")
+        print("\n  🔀 Router: planner → tool (LLM requested knowledge lookup)")
         return "tool"
 
     print("\n  🔀 Router: planner → critic (itinerary ready for review)")
@@ -33,10 +33,17 @@ workflow.add_conditional_edges(
 workflow.add_edge("tool", "planner")
 
 
+MAX_ATTEMPTS = 3
+
+
 def critic_router(state):
 
     if state["repair_instructions"]:
-        print("\n  🔀 Router: critic → planner (repairs needed, looping back)")
+        attempts = state.get("attempt_count", 0)
+        if attempts >= MAX_ATTEMPTS:
+            print(f"\n  🔀 Router: critic → END (max {MAX_ATTEMPTS} attempts reached, giving up)")
+            return END
+        print(f"\n  🔀 Router: critic → planner (repairs needed, attempt {attempts}/{MAX_ATTEMPTS})")
         return "planner"
 
     print("\n  🔀 Router: critic → END (all good, finishing!)")

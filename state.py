@@ -7,3 +7,4 @@ class AgentState(TypedDict):
     tool_results: Dict[str, Any]
     itinerary: dict | None
     repair_instructions: dict | None
+    attempt_count: int
