@@ -1,5 +1,6 @@
-import time
-from fastapi import FastAPI, HTTPException
+import json
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from graph import graph
 
@@ -11,22 +12,17 @@ class TripRequest(BaseModel):
     aggregated_data: dict
 
 
-@app.post("/generate-itinerary")
-def generate_itinerary(req: TripRequest):
+def stream_agent(state):
+    for event in graph.stream(state):
+        for node, output in event.items():
+            payload = {"node": node, "state": output}
+            yield f"data: {json.dumps(payload)}\n\n"
 
-    destination = req.trip.get("title", "Unknown")
-    duration = req.trip.get("durationDays", "?")
-    group_size = req.aggregated_data.get("groupSize", "?")
-    budget = req.aggregated_data.get("budget", {})
+    yield "data: [DONE]\n\n"
 
-    print("\n" + "=" * 60)
-    print("📡 API — /generate-itinerary")
-    print("=" * 60)
-    print(f"  📍 Destination: {destination}")
-    print(f"  📅 Duration: {duration} days")
-    print(f"  👥 Group size: {group_size}")
-    print(f"  💰 Budget: ₹{budget.get('min', '?')} – ₹{budget.get('max', '?')} (target ₹{budget.get('recommended', '?')}/person)")
 
+@app.post("/generate-itinerary-stream")
+def generate_itinerary_stream(req: TripRequest):
     initial_state = {
         "trip": req.trip,
         "aggregated_data": req.aggregated_data,
@@ -36,27 +32,7 @@ def generate_itinerary(req: TripRequest):
         "attempt_count": 0,
     }
 
-    try:
-        start = time.time()
-        result = graph.invoke(initial_state)
-        elapsed = round(time.time() - start, 2)
-        attempts = result.get("attempt_count", 0)
-
-        print(f"\n  ⏱️  Pipeline completed in {elapsed}s ({attempts} attempt(s))")
-
-        if result["itinerary"] is None:
-            print("  ❌ Pipeline finished but no itinerary was generated")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate itinerary after {attempts} attempt(s)"
-            )
-
-        print("  ✅ Itinerary returned to client")
-        return {"itinerary": result["itinerary"]}
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print(f"  ❌ Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(
+        stream_agent(initial_state),
+        media_type="text/event-stream",
+    )
