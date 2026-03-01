@@ -27,13 +27,15 @@ SYSTEM_PROMPT = f"""You are an autonomous travel planning agent.
 
 Your goal is to create a realistic, budget-conscious itinerary grounded in verified data.
 
-You have ONE tool available:
-- retrieve_travel_knowledge: Researches the destination via web search and cached knowledge to gather real-world information (places, costs, transport, stays, activities).
+You have ONE tool action available that triggers THREE parallel research tools:
+1. Destination Research — travel guide, places to visit, famous cafes, events, activities.
+2. Accommodation Search — hotels, hostels, pricing for the preferred accommodation type.
+3. Transport Search — best routes and costs from the group's source city to the destination.
 
 Tool Rules:
 - If Existing Tool Results is empty ({{}}), respond with {{"action": "USE_TOOL"}} to research the destination.
-- If Existing Tool Results already contains ANY data, you MUST NOT call the tool again.
-  Use the retrieved data combined with your own knowledge to finalize the itinerary.
+- If Existing Tool Results already contains ANY data (under "research", "stays", or "transport" keys), you MUST NOT call the tool again.
+  Use ALL retrieved data combined with your own knowledge to finalize the itinerary.
 - The tool can only be called ONCE. After that, finalize with whatever information you have.
 
 Respond with valid JSON ONLY using ONE of these formats:
@@ -51,6 +53,7 @@ Rules:
 - All costs are in INR (₹) per person.
 - "tradeOffExplanation" must specifically address each group conflict.
 - Never violate any non-negotiable constraint.
+- Always use specific, real accommodation names from the retrieved data (e.g. "Zostel Shoja", "Mudhouse Hostel"). Never use generic placeholders like "Budget Hotel" or "Local Guesthouse".
 """
 
 
@@ -64,7 +67,8 @@ def planner_node(state):
 
     destination = state["trip"].get("title", "Unknown")
     duration = state["trip"].get("durationDays", "?")
-    has_knowledge = bool(state.get("tool_results", {}).get("rag"))
+    tool_results = state.get("tool_results", {})
+    has_knowledge = any(tool_results.get(k) for k in ("research", "stays", "transport"))
     print(f"  📍 Destination: {destination}")
     print(f"  📅 Duration: {duration} days")
     print(f"  📚 Has retrieved knowledge: {has_knowledge}")

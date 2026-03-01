@@ -2,13 +2,13 @@ from langgraph.graph import StateGraph, END
 from state import AgentState
 from planner import planner_node
 from critic import critic_node
-from tools import retrieve_travel_knowledge
+from tools import run_all_tools
 
 
 workflow = StateGraph(AgentState)
 
 workflow.add_node("planner", planner_node)
-workflow.add_node("tool", retrieve_travel_knowledge)
+workflow.add_node("tool", run_all_tools)
 workflow.add_node("critic", critic_node)
 
 

@@ -16,7 +16,7 @@ def stream_agent(state):
     for event in graph.stream(state):
         for node, output in event.items():
             payload = {"node": node, "state": output}
-            yield f"data: {json.dumps(payload)}\n\n"
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     yield "data: [DONE]\n\n"
 

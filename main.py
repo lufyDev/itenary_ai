@@ -11,6 +11,7 @@ initial_state = {
         "durationDays": 3,
     },
      "aggregated_data": {
+        "source": "Delhi",
         "groupSize": 3,
         "budget": {
             "min": 5000,
@@ -54,6 +55,6 @@ print(f"🏁 FINAL RESULT ({result.get('attempt_count', '?')} attempt(s))")
 print("=" * 60)
 
 if result["itinerary"]:
-    print(json.dumps(result["itinerary"], indent=2))
+    print(json.dumps(result["itinerary"], indent=2, ensure_ascii=False))
 else:
     print("❌ Failed to generate an itinerary.")
