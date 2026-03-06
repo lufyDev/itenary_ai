@@ -7,11 +7,14 @@ print("🚀" * 30)
 
 initial_state = {
     "trip": {
-        "title": "Jibhi",
+        "title": "Jibhi Weekend Getaway",
+        "source": "Delhi",
+        "destination": "Jibhi",
         "durationDays": 3,
     },
      "aggregated_data": {
         "source": "Delhi",
+        "destination": "Jibhi",
         "groupSize": 3,
         "budget": {
             "min": 5000,

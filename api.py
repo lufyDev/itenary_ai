@@ -7,9 +7,39 @@ from graph import graph
 app = FastAPI()
 
 
+class Budget(BaseModel):
+    min: int
+    max: int
+    recommended: int
+
+
+class MajorityPreferences(BaseModel):
+    travelStyle: str
+    foodPreference: str
+    accommodationType: str
+
+
+class Trip(BaseModel):
+    title: str
+    source: str
+    destination: str
+    durationDays: int
+
+
+class AggregatedData(BaseModel):
+    source: str
+    destination: str
+    groupSize: int
+    budget: Budget
+    majorityPreferences: MajorityPreferences
+    topActivities: list[str] = []
+    nonNegotiables: list[str] = []
+    conflicts: list[str] = []
+
+
 class TripRequest(BaseModel):
-    trip: dict
-    aggregated_data: dict
+    trip: Trip
+    aggregated_data: AggregatedData
 
 
 def stream_agent(state):
@@ -24,8 +54,8 @@ def stream_agent(state):
 @app.post("/generate-itinerary-stream")
 def generate_itinerary_stream(req: TripRequest):
     initial_state = {
-        "trip": req.trip,
-        "aggregated_data": req.aggregated_data,
+        "trip": req.trip.model_dump(),
+        "aggregated_data": req.aggregated_data.model_dump(),
         "tool_results": {},
         "itinerary": None,
         "repair_instructions": None,

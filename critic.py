@@ -24,6 +24,7 @@ Validate:
 3. Respect for non-negotiables (these are hard constraints the group WANTS, e.g. "no-flights" = never include flights, "smoking-allowed" = smoking IS permitted — do NOT penalize for it)
 4. Realistic activity pacing (only flag if a day is clearly impossible)
 5. Fair handling of preference conflicts (tradeOffExplanation must address them)
+6. Route logistics — the itinerary must include realistic travel from source to destination on Day 1 and the return journey on the last day, with appropriate transport options.
 
 Return STRICT JSON:
 
@@ -75,12 +76,15 @@ def _run_structural_checks(itinerary, trip, aggregated_data):
     return issues
 
 
-def _run_llm_review(itinerary, aggregated_data, duration_days):
+def _run_llm_review(itinerary, trip, aggregated_data, duration_days):
     """Subjective quality checks using an LLM."""
 
     budget = aggregated_data.get("budget", {})
+    source = trip.get("source", aggregated_data.get("source", "Unknown"))
+    destination = trip.get("destination", aggregated_data.get("destination", "Unknown"))
 
-    user_prompt = f"""Recommended Budget: ₹{budget.get("recommended")}/person
+    user_prompt = f"""Route: {source} → {destination}
+Recommended Budget: ₹{budget.get("recommended")}/person
 Duration: {duration_days} days
 
 Aggregated Constraints:
@@ -142,7 +146,7 @@ def critic_node(state):
     print("     ✅ Structure OK")
 
     print("  🤖 Running LLM quality review...")
-    review = _run_llm_review(itinerary, state["aggregated_data"], duration_days)
+    review = _run_llm_review(itinerary, state["trip"], state["aggregated_data"], duration_days)
 
     is_valid = review.get("isValid", True)
     violations = review.get("violations", [])

@@ -7,7 +7,7 @@ CATEGORY = "research"
 def research_tool(state: dict) -> list[str]:
     """Gather destination guide info: places, cafes, events, activities."""
 
-    destination = state["trip"]["title"]
+    destination = state["trip"]["destination"]
     agg = state.get("aggregated_data", {})
 
     parts = [destination]
