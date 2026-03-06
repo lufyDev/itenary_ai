@@ -30,11 +30,14 @@ ITINERARY_SCHEMA = """{
 SYSTEM_PROMPT = f"""You are an autonomous travel planning agent.
 
 Your goal is to create a realistic, budget-conscious itinerary grounded in verified data.
+The trip has an explicit SOURCE (origin city) and DESTINATION. You must plan the full journey
+from source to destination, including realistic travel logistics on Day 1 (departure) and
+the return journey on the last day.
 
 You have ONE tool action available that triggers THREE parallel research tools:
 1. Destination Research — travel guide, places to visit, famous cafes, events, activities.
 2. Accommodation Search — hotels, hostels, pricing for the preferred accommodation type.
-3. Transport Search — best routes and costs from the group's source city to the destination.
+3. Transport Search — best routes and costs from source to destination.
 
 Tool Rules:
 - If Existing Tool Results is empty ({{}}), respond with {{"action": "USE_TOOL"}} to research the destination.
@@ -55,6 +58,9 @@ The itinerary object MUST strictly match this schema:
 
 Rules:
 - All costs are in INR (₹) per person.
+- Day 1 must include travel from the source city to the destination with specific transport options (bus, train, cab, etc.), estimated travel time, and cost.
+- The last day must include the return journey from destination back to source.
+- Include location-specific activities, landmarks, and experiences at the destination.
 - "tradeOffExplanation" must specifically address each group conflict.
 - Never violate any non-negotiable constraint.
 - Always use specific, real accommodation names from the retrieved data (e.g. "Zostel Shoja", "Mudhouse Hostel"). Never use generic placeholders like "Budget Hotel" or "Local Guesthouse".
@@ -69,11 +75,12 @@ def planner_node(state):
     print(f"🧠 PLANNER NODE (critic rejections so far: {attempt})")
     print("=" * 60)
 
-    destination = state["trip"].get("title", "Unknown")
+    source = state["trip"].get("source", "Unknown")
+    destination = state["trip"].get("destination", state["trip"].get("title", "Unknown"))
     duration = state["trip"].get("durationDays", "?")
     tool_results = state.get("tool_results", {})
     has_knowledge = any(tool_results.get(k) for k in ("research", "stays", "transport"))
-    print(f"  📍 Destination: {destination}")
+    print(f"  📍 Route: {source} → {destination}")
     print(f"  📅 Duration: {duration} days")
     print(f"  📚 Has retrieved knowledge: {has_knowledge}")
 

@@ -7,7 +7,7 @@ CATEGORY = "stays"
 def stays_tool(state: dict) -> list[str]:
     """Gather accommodation options and pricing."""
 
-    destination = state["trip"]["title"]
+    destination = state["trip"]["destination"]
     agg = state.get("aggregated_data", {})
 
     accom_type = agg.get("majorityPreferences", {}).get("accommodationType", "budget hotel")

@@ -7,10 +7,9 @@ CATEGORY = "transport"
 def transport_tool(state: dict) -> list[str]:
     """Gather transport routes and costs from source to destination."""
 
-    destination = state["trip"]["title"]
-    agg = state.get("aggregated_data", {})
-    source = agg.get("source", "Delhi")
-    budget = agg.get("budget", {}).get("recommended")
+    destination = state["trip"]["destination"]
+    source = state["trip"]["source"]
+    budget = state.get("aggregated_data", {}).get("budget", {}).get("recommended")
 
     query = f"{source} to {destination} transport cost budget {budget or ''} INR"
 
