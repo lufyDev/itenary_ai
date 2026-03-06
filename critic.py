@@ -1,10 +1,14 @@
+import os
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI()
+client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1",
+)
 
 REQUIRED_DAY_FIELDS = {"day", "morning", "afternoon", "evening", "stay", "estimatedCostPerPerson"}
 REQUIRED_TOP_FIELDS = {"summary", "days", "totalEstimatedCostPerPerson", "tradeOffExplanation"}
@@ -88,7 +92,7 @@ Generated Itinerary:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="llama-3.3-70b-versatile",
             temperature=0,
             messages=[
                 {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
