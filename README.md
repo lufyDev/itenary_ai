@@ -1,6 +1,6 @@
 # ItineraryAI — AI Microservice
 
-This is the AI brain behind [ItineraryAI](#), a group trip planning system. The main app (Node.js + Next.js) handles user auth, trip creation, survey collection, and preference aggregation. Once all group members have submitted their preferences and the system has aggregated them, the main backend fires a request to this microservice — and this is where the magic happens.
+This is the AI brain behind [ItineraryAI](https://github.com/lufyDev/itenaryAI), a group trip planning system. The main app (Node.js + Next.js) handles user auth, trip creation, survey collection, and preference aggregation. Once all group members have submitted their preferences and the system has aggregated them, the main backend fires a request to this microservice — and this is where the magic happens.
 
 This microservice takes in the group's aggregated travel preferences and generates a detailed, day-by-day itinerary using an **agentic LLM pipeline** with real-time web research, a planner-critic feedback loop, and a RAG-backed caching layer.
 
