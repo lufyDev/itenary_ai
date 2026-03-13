@@ -1,5 +1,7 @@
 # ItineraryAI — AI Microservice
 
+> **Live** as part of [itineraryai.in](https://itineraryai.in) — this is an internal microservice, not directly exposed to the public. It's called by the main backend.
+
 This is the AI brain behind [ItineraryAI](https://github.com/lufyDev/itenaryAI), a group trip planning system. The main app (Node.js + Next.js) handles user auth, trip creation, survey collection, and preference aggregation. Once all group members have submitted their preferences and the system has aggregated them, the main backend fires a request to this microservice — and this is where the magic happens.
 
 This microservice takes in the group's aggregated travel preferences and generates a detailed, day-by-day itinerary using an **agentic LLM pipeline** with real-time web research, a planner-critic feedback loop, and a RAG-backed caching layer.
@@ -308,6 +310,42 @@ python ingest.py
 
 This loads `data/jibhi_guide.txt` into ChromaDB so the tools can retrieve it without hitting the Tavily API.
 
+## Production Deployment
+
+This microservice is deployed on the same **AWS EC2 instance** (`t3.micro`, Ubuntu 24.04, `ap-south-1`) that runs the main ItineraryAI app. It's not containerized — it runs directly on the instance, managed by **systemd**.
+
+- Runs on **port 8000** internally
+- The main Node.js backend calls it at `http://localhost:8000` — it never leaves the machine
+- **Not exposed to the internet** — only accessible from within the EC2 instance
+- Uses a Python virtual environment at `/var/www/itinerary-ai/ai-service/venv`
+- systemd service file: `/etc/systemd/system/itinerary-ai-service.service`
+
+## Redeployment
+
+To pull the latest changes and restart the service on the EC2 instance:
+
+```bash
+cd /var/www/itinerary-ai/ai-service
+git pull origin main
+source venv/bin/activate
+pip install -r requirements.txt
+deactivate
+sudo systemctl restart itinerary-ai-service
+```
+
+## Monitoring
+
+```bash
+# Check if the service is running
+sudo systemctl status itinerary-ai-service
+
+# Follow logs in real time
+sudo journalctl -u itinerary-ai-service -f
+
+# Restart the service
+sudo systemctl restart itinerary-ai-service
+```
+
 ## How a Request Flows
 
 Here's what happens end-to-end when the main backend sends a request:
@@ -330,3 +368,7 @@ Here's what happens end-to-end when the main backend sends a request:
 7. **Stream ends** — A `[DONE]` event is sent, and the frontend has the final itinerary.
 
 Each step is streamed as an SSE event, so the frontend can show progress in real time.
+
+## Related
+
+- [**itenaryAI**](https://github.com/lufyDev/itenaryAI) — The main app (Node.js backend + Next.js frontend). Handles user auth, trip creation, survey collection, preference aggregation, and calls this microservice to generate itineraries.
