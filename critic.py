@@ -45,6 +45,16 @@ Rules:
 """
 
 
+def _log_repair_payload(violations, repair_instructions, feedback):
+    payload = {
+        "violations": violations,
+        "repairInstructions": repair_instructions,
+        "feedback": feedback,
+    }
+    print("  📤 Repair instructions sent to planner:")
+    print(json.dumps(payload, indent=2))
+
+
 def _run_structural_checks(itinerary, trip, aggregated_data):
     """Deterministic checks that don't need an LLM."""
 
@@ -135,6 +145,11 @@ def critic_node(state):
             "repairInstructions": {"budgetAdjustment": "ok", "activityDensity": "ok", "conflictHandling": "ok"},
             "feedback": "Fix structural issues before quality review"
         }
+        _log_repair_payload(
+            state["repair_instructions"]["violations"],
+            state["repair_instructions"]["repairInstructions"],
+            state["repair_instructions"]["feedback"],
+        )
         state["itinerary"] = None
         state["attempt_count"] = state.get("attempt_count", 0) + 1
         return state
@@ -163,6 +178,11 @@ def critic_node(state):
             "repairInstructions": repair,
             "feedback": feedback
         }
+        _log_repair_payload(
+            state["repair_instructions"]["violations"],
+            state["repair_instructions"]["repairInstructions"],
+            state["repair_instructions"]["feedback"],
+        )
         state["itinerary"] = None
         state["attempt_count"] = state.get("attempt_count", 0) + 1
     else:
