@@ -1,14 +1,10 @@
-import os
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1",
-)
+client = OpenAI()
 
 ITINERARY_SCHEMA = """{
   "summary": "string — brief overview of the trip plan",
@@ -114,7 +110,7 @@ Decide the NEXT BEST ACTION.
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",
             temperature=0.3,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
