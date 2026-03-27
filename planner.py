@@ -106,7 +106,7 @@ Additional Rules:
 Decide the NEXT BEST ACTION.
 """
 
-    print("  🤖 Calling Groq (llama-3.3-70b-versatile)...")
+    print("  🤖 Calling GPT-4o-mini...")
 
     try:
         response = client.chat.completions.create(
