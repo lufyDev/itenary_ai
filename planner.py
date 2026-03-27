@@ -1,14 +1,10 @@
-import os
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1",
-)
+client = OpenAI()
 
 ITINERARY_SCHEMA = """{
   "summary": "string — brief overview of the trip plan",
@@ -60,6 +56,10 @@ Rules:
 - All costs are in INR (₹) per person.
 - Day 1 must include travel from the source city to the destination with specific transport options (bus, train, cab, etc.), estimated travel time, and cost.
 - The last day must include the return journey from destination back to source.
+- The itinerary must cover the FULL trip duration. Never collapse a multi-day trip into a single day, even if some days are light or mostly travel.
+- If the trip duration is N days, the "days" array must contain exactly N objects, with day numbers 1 through N and no gaps.
+- If retrieved data is limited, still produce a complete N-day itinerary using the available evidence plus reasonable planning assumptions.
+- Before finalizing, do a self-check that the number of day entries exactly matches the requested duration. If it does not, revise before responding.
 - Include location-specific activities, landmarks, and experiences at the destination.
 - "tradeOffExplanation" must specifically address each group conflict.
 - Never violate any non-negotiable constraint.
@@ -105,16 +105,24 @@ Repair Instructions (from critic):
 
 Additional Rules:
 - The "days" array MUST have exactly {duration} entries, numbered 1 to {duration}.
+- Expected day numbers are exactly: {list(range(1, duration + 1)) if isinstance(duration, int) and duration > 0 else f"1 to {duration}"}.
+- Never combine multiple trip days into one "day" object.
+- If you are missing details for some middle day, make the best realistic plan you can, but still return all {duration} days.
 - "totalEstimatedCostPerPerson" should be close to ₹{state["aggregated_data"].get("budget", {}).get("recommended")}.
+- Final self-check before responding:
+  1. Is "action" set correctly?
+  2. If action is "ITINERARY", does the itinerary include exactly {duration} day objects?
+  3. Do Day 1 and Day {duration} include outbound and return travel respectively?
+  4. If any answer is no, revise internally before returning JSON.
 
 Decide the NEXT BEST ACTION.
 """
 
-    print("  🤖 Calling Groq (llama-3.3-70b-versatile)...")
+    print("  🤖 Calling GPT-4o-mini...")
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",
             temperature=0.3,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

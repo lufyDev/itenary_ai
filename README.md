@@ -55,7 +55,7 @@ The core of this service is an **agentic loop** built with [LangGraph](https://g
                                                   END
 ```
 
-**1. Planner** — The planner is the main brain. It uses Groq's `llama-3.3-70b-versatile` model. On its first run, it sees that there's no research data yet, so it asks for a tool call. After the tools return with real data, the planner uses that data (combined with its own knowledge) to craft a full itinerary.
+**1. Planner** — The planner is the main brain. It uses OpenAI's `gpt-4o-mini` model. On its first run, it sees that there's no research data yet, so it asks for a tool call. After the tools return with real data, the planner uses that data (combined with its own knowledge) to craft a full itinerary.
 
 **2. Tools** — Three research tools run **in parallel** using a thread pool:
    - **Destination Research** — Searches for things to do, local attractions, cafes, events, activities at the destination.
@@ -215,7 +215,7 @@ All costs are in **INR (₹) per person**. Day 1 always includes travel from the
 | Component | What's Used |
 |-----------|-------------|
 | API Framework | FastAPI |
-| LLM (Planner & Critic) | Groq — `llama-3.3-70b-versatile` |
+| LLM (Planner & Critic) | OpenAI — `gpt-4o-mini` |
 | Embeddings | OpenAI — `text-embedding-3-small` |
 | Agent Framework | LangGraph |
 | Vector Database | ChromaDB (persistent, local) |
@@ -248,7 +248,7 @@ All costs are in **INR (₹) per person**. Day 1 always includes travel from the
 ### Prerequisites
 
 - Python 3.11+
-- API keys for Groq, OpenAI, and Tavily
+- API keys for OpenAI and Tavily
 
 ### 1. Clone and set up the virtual environment
 
@@ -271,15 +271,13 @@ pip install fastapi uvicorn openai langgraph chromadb tavily-python python-doten
 Create a `.env` file in the project root:
 
 ```env
-GROQ_API_KEY=your_groq_api_key
 OPENAI_API_KEY=your_openai_api_key
 TAVILY_API_KEY=your_tavily_api_key
 ```
 
 | Variable | What It's For |
 |----------|---------------|
-| `GROQ_API_KEY` | Used by the planner and critic nodes to call Groq's LLM API |
-| `OPENAI_API_KEY` | Used by the RAG layer for generating text embeddings |
+| `OPENAI_API_KEY` | Used by the planner, critic, and RAG layer for LLM calls and text embeddings |
 | `TAVILY_API_KEY` | Used by the web search module for real-time destination research |
 
 ### 4. Run the server

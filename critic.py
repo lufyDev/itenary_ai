@@ -1,14 +1,10 @@
-import os
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1",
-)
+client = OpenAI()
 
 REQUIRED_DAY_FIELDS = {"day", "morning", "afternoon", "evening", "stay", "estimatedCostPerPerson"}
 REQUIRED_TOP_FIELDS = {"summary", "days", "totalEstimatedCostPerPerson", "tradeOffExplanation"}
@@ -47,6 +43,16 @@ Rules:
 - Food preference (e.g. "non-veg") has nothing to do with alcohol. Do NOT conflate them.
 - When in doubt, mark as valid.
 """
+
+
+def _log_repair_payload(violations, repair_instructions, feedback):
+    payload = {
+        "violations": violations,
+        "repairInstructions": repair_instructions,
+        "feedback": feedback,
+    }
+    print("  📤 Repair instructions sent to planner:")
+    print(json.dumps(payload, indent=2))
 
 
 def _run_structural_checks(itinerary, trip, aggregated_data):
@@ -96,7 +102,7 @@ Generated Itinerary:
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",
             temperature=0,
             messages=[
                 {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
@@ -139,6 +145,11 @@ def critic_node(state):
             "repairInstructions": {"budgetAdjustment": "ok", "activityDensity": "ok", "conflictHandling": "ok"},
             "feedback": "Fix structural issues before quality review"
         }
+        _log_repair_payload(
+            state["repair_instructions"]["violations"],
+            state["repair_instructions"]["repairInstructions"],
+            state["repair_instructions"]["feedback"],
+        )
         state["itinerary"] = None
         state["attempt_count"] = state.get("attempt_count", 0) + 1
         return state
@@ -167,6 +178,11 @@ def critic_node(state):
             "repairInstructions": repair,
             "feedback": feedback
         }
+        _log_repair_payload(
+            state["repair_instructions"]["violations"],
+            state["repair_instructions"]["repairInstructions"],
+            state["repair_instructions"]["feedback"],
+        )
         state["itinerary"] = None
         state["attempt_count"] = state.get("attempt_count", 0) + 1
     else:
