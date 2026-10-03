@@ -1,0 +1,16 @@
+# Direct dependencies only — pip resolves the rest.
+# Pinned to what was verified working locally (Python 3.13).
+
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+python-dotenv==1.2.2
+
+# LLM + agent graph
+openai==2.38.0
+langgraph==1.2.2
+langchain-core==1.4.0
+
+# Retrieval
+chromadb==1.5.9
+tavily-python==0.7.24

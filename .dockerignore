@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+.env
+.DS_Store
+README.md
+DEPLOY.md
+main.py
+
+# NOTE: chroma_db/ is deliberately NOT ignored.
+# It is gitignored but copied into the image at build time so the
+# container ships with a pre-warmed destination cache. See DEPLOY.md.
