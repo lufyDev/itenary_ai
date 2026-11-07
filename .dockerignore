@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+.env
+.DS_Store
+README.md
+DEPLOY.md
+main.py
+
+# NOTE: chroma_db/ is deliberately NOT ignored, so a local docker build ships
+# with a pre-warmed destination cache. Builds from GitHub don't have it, and on
+# Railway a volume mounted over that path holds the cache. See DEPLOY.md.

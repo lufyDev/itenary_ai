@@ -310,39 +310,21 @@ This loads `data/jibhi_guide.txt` into ChromaDB so the tools can retrieve it wit
 
 ## Production Deployment
 
-This microservice is deployed on the same **AWS EC2 instance** (`t3.micro`, Ubuntu 24.04, `ap-south-1`) that runs the main ItineraryAI app. It's not containerized — it runs directly on the instance, managed by **systemd**.
+This microservice runs as a Docker container on **Railway**, in the same project as the main ItineraryAI API. See [DEPLOY.md](./DEPLOY.md) for the steps.
 
-- Runs on **port 8000** internally
-- The main Node.js backend calls it at `http://localhost:8000` — it never leaves the machine
-- **Not exposed to the internet** — only accessible from within the EC2 instance
-- Uses a Python virtual environment at `/var/www/itinerary-ai/ai-service/venv`
-- systemd service file: `/etc/systemd/system/itinerary-ai-service.service`
+- **Not exposed to the internet**: it has no public domain, and the main Node.js backend calls it over Railway's private network
+- A **volume** at `/app/chroma_db` keeps the destination cache across restarts and redeploys
+- It **sleeps when idle** and wakes on the next request, and the backend retries while it boots
+
+Earlier versions ran directly on an AWS EC2 instance under systemd, without containers. That instance was shut down when its free tier ended.
 
 ## Redeployment
 
-To pull the latest changes and restart the service on the EC2 instance:
-
-```bash
-cd /var/www/itinerary-ai/ai-service
-git pull origin main
-source venv/bin/activate
-pip install -r requirements.txt
-deactivate
-sudo systemctl restart itinerary-ai-service
-```
+Pushing to the deployed branch triggers a rebuild on Railway.
 
 ## Monitoring
 
-```bash
-# Check if the service is running
-sudo systemctl status itinerary-ai-service
-
-# Follow logs in real time
-sudo journalctl -u itinerary-ai-service -f
-
-# Restart the service
-sudo systemctl restart itinerary-ai-service
-```
+Logs and memory use are in the service's Deployments and Metrics tabs on Railway. `GET /health` returns `{"status": "ok"}`, but calling it wakes the service if it's asleep.
 
 ## How a Request Flows
 

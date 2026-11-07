@@ -65,4 +65,15 @@ def generate_itinerary_stream(req: TripRequest):
     return StreamingResponse(
         stream_agent(initial_state),
         media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            # Stops intermediate proxies from buffering the SSE stream.
+            "X-Accel-Buffering": "no",
+        },
     )
+
+
+@app.get("/health")
+def health():
+    """Liveness probe. Cheap on purpose — no OpenAI or Chroma calls."""
+    return {"status": "ok"}
