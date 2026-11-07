@@ -18,11 +18,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# App code. Also pulls in chroma_db/ if present locally, shipping the
-# image with a pre-warmed destination cache (see .dockerignore).
+# App code. A local build also pulls in chroma_db/ if present. On Railway the
+# volume mounted at /app/chroma_db holds the cache instead (see DEPLOY.md).
 COPY . .
 
-# Cloud Run / Fly inject PORT. 8080 is the local default.
+# Railway injects PORT. 8080 is the local default.
 ENV PORT=8080
 EXPOSE 8080
 

@@ -17,44 +17,48 @@ Two hard constraints, both found in the code:
    the destination cache would die on every cold start and every request
    would re-run three Tavily searches plus re-embedding.
 
-A scale-to-zero container host (Cloud Run, Fly.io) sidesteps both: the 400MB
-is irrelevant in an image, the filesystem is writable, streaming is native,
-and the request timeout is minutes not seconds.
+A container on Railway sidesteps both: the 400MB is irrelevant in an image, a
+volume gives Chroma a disk that lasts, and streaming works natively.
 
-The `chroma_db/` directory is gitignored but **not** in `.dockerignore`, so
-`docker build` copies your local copy into the image and the container starts
-with a pre-warmed cache. Writes at runtime work but only last the lifetime of
-the instance — see "Known limits".
+## Deploy (Railway)
 
-## Deploy (Cloud Run)
+Add this as a service in the **same Railway project** as the Express API, from
+the `lufyDev/itenary_ai` repo. Railway finds the Dockerfile at the repo root.
 
-```bash
-gcloud run deploy itineraryai-agent \
-  --source . \
-  --region asia-south1 \
-  --allow-unauthenticated \
-  --memory 2Gi \
-  --cpu 2 \
-  --timeout 600 \
-  --concurrency 4 \
-  --max-instances 2 \
-  --set-env-vars "OPENAI_API_KEY=...,TAVILY_API_KEY=..."
+Variables:
+
+```
+OPENAI_API_KEY=...
+TAVILY_API_KEY=...
+PORT=8080
 ```
 
-Flags that matter:
+Settings:
 
-- `--timeout 600` — the agent loop runs up to 3 planner/critic attempts. The
-  Express proxy gives up at 180s; keep this comfortably above that.
-- `--concurrency 4` — a generation is CPU- and memory-heavy. The default of 80
-  would let a handful of requests thrash one instance.
-- `--max-instances 2` — spend ceiling. Also keeps the in-memory rate limiter
-  on the Express side roughly honest.
-- `--memory 2Gi` — chromadb + langgraph imports are not small, and Chroma's
-  store counts against memory on Cloud Run.
+- **Networking: do not generate a public domain.** This service has no auth of
+  its own, so only Express should be able to reach it. Under private networking,
+  note the hostname, and rename it if it came out odd (the repo name has an
+  underscore), e.g. `itineraryai-agent`. Express calls
+  `http://<hostname>.railway.internal:8080`, which is why `PORT` is fixed above.
+- **Volume: mount one at `/app/chroma_db`.** This is what keeps the destination
+  cache across restarts and redeploys.
+- **Serverless: turn on.** The agent sleeps when idle, which is most of what
+  keeps this near the plan's included $5. Express retries while it wakes.
+- **Healthcheck path:** `/health`.
+- **Memory limit:** 2 GB is a sensible ceiling to start with. Check actual use
+  in the metrics tab after a few generations and lower it if you can.
 
-Scale-to-zero is the default (`--min-instances 0`), which is what keeps this
-near free. Cold start is roughly 8-15s while chromadb and langgraph import.
-If that ever matters, `--min-instances 1` removes it for a few dollars a month.
+Cold start is roughly 8-15s while chromadb and langgraph import. If that ever
+matters, turning serverless off removes it, for a few dollars more a month.
+
+### The cache starts empty
+
+`chroma_db/` is gitignored, so an image built from GitHub doesn't include your
+local copy, and the volume starts empty anyway. The first trip to each
+destination pays for its Tavily searches and embeddings, and later trips reuse
+them. Running `docker build` locally still copies `chroma_db/` into the image,
+because it isn't in `.dockerignore`, but on Railway the volume mounted over that
+path hides it.
 
 ## Local
 
@@ -71,17 +75,17 @@ excluded from the image.
 See `.env.example`. `OPENAI_API_KEY` and `TAVILY_API_KEY` are required;
 `GROQ_API_KEY` only matters if the planner/critic get switched back to Groq.
 
-**Set a hard spend cap on the OpenAI account.** This service is reachable
-from the public internet and spends money per call.
+**Set a hard spend cap on the OpenAI account.** Express's rate limiter bounds
+how many generations run, but only the spend cap bounds what they cost.
 
 ## Known limits
 
-- **Cache is per-instance.** `chroma_db/` ships pre-warmed in the image and is
-  writable at runtime, but a new instance starts from the baked copy and
-  anything ingested since is lost. Acceptable for a demo. The real fix is
-  moving these vectors into MongoDB Atlas Vector Search — embeddings already
-  come from OpenAI `text-embedding-3-small`, so Chroma is pure vector storage
-  here, and the move would also drop ~240MB of dependencies.
+- **One instance only.** Railway doesn't allow replicas on a service with a
+  volume, and Chroma's local store couldn't be shared between instances anyway.
+  That's fine for a demo. The real fix is moving these vectors into MongoDB
+  Atlas Vector Search — embeddings already come from OpenAI
+  `text-embedding-3-small`, so Chroma is pure vector storage here, and the move
+  would also drop ~240MB of dependencies.
 - **If the image build fails on a missing wheel**, add
   `RUN apt-get update && apt-get install -y --no-install-recommends build-essential`
   before the `pip install` line. All current deps publish cp313 manylinux

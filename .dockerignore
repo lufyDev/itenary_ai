@@ -10,6 +10,6 @@ README.md
 DEPLOY.md
 main.py
 
-# NOTE: chroma_db/ is deliberately NOT ignored.
-# It is gitignored but copied into the image at build time so the
-# container ships with a pre-warmed destination cache. See DEPLOY.md.
+# NOTE: chroma_db/ is deliberately NOT ignored, so a local docker build ships
+# with a pre-warmed destination cache. Builds from GitHub don't have it, and on
+# Railway a volume mounted over that path holds the cache. See DEPLOY.md.
