@@ -36,10 +36,14 @@ PORT=8080
 Settings:
 
 - **Networking: do not generate a public domain.** This service has no auth of
-  its own, so only Express should be able to reach it. Under private networking,
-  note the hostname, and rename it if it came out odd (the repo name has an
-  underscore), e.g. `itineraryai-agent`. Express calls
-  `http://<hostname>.railway.internal:8080`, which is why `PORT` is fixed above.
+  its own, so only Express should be able to reach it. Railway gives it a private
+  address automatically, shown as `RAILWAY_PRIVATE_DOMAIN` under "variables added
+  by Railway". Express calls that address on port 8080, which is why `PORT` is
+  fixed above.
+- **Service name:** `itineraryai-agent`, for readability. Click the service card
+  to rename it. This doesn't need a redeploy, and it doesn't change the private
+  address, which stays what Railway set when the service was created
+  (`itenaryai.railway.internal` for this one).
 - **Volume: mount one at `/app/chroma_db`.** This is what keeps the destination
   cache across restarts and redeploys.
 - **Serverless: turn on.** The agent sleeps when idle, which is most of what
@@ -69,6 +73,12 @@ uvicorn api:app --reload --port 8000
 
 `main.py` is the CLI harness for running the graph without HTTP. It is
 excluded from the image.
+
+Offline tests for the critic, planner schema and graph routing (no API calls):
+
+```bash
+venv/bin/python -m unittest discover tests
+```
 
 ## Env
 

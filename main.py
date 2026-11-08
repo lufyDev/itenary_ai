@@ -43,6 +43,7 @@ initial_state = {
     "tool_results": {},
     "itinerary": None,
     "repair_instructions": None,
+    "rejected_itinerary": None,
     "attempt_count": 0,
 }
 

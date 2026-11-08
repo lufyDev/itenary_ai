@@ -15,9 +15,22 @@ workflow.add_node("critic", critic_node)
 workflow.set_entry_point("planner")
 
 
+MAX_ATTEMPTS = 3
+
+
 def planner_router(state):
 
     if state["itinerary"] is None:
+        # Tools only run once. A planner that comes back empty after that
+        # (bad JSON, API error) used to be sent to the tool node again, which
+        # looped until LangGraph's recursion limit crashed the stream.
+        if state.get("tool_results"):
+            attempts = state.get("attempt_count", 0)
+            if attempts >= MAX_ATTEMPTS:
+                print(f"\n  🔀 Router: planner → END (no itinerary after {attempts} attempts)")
+                return END
+            print("\n  🔀 Router: planner → planner (no itinerary returned, retrying)")
+            return "planner"
         print("\n  🔀 Router: planner → tool (LLM requested knowledge lookup)")
         return "tool"
 
@@ -31,9 +44,6 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("tool", "planner")
-
-
-MAX_ATTEMPTS = 3
 
 
 def critic_router(state):

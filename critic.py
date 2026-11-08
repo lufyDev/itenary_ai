@@ -12,15 +12,14 @@ REQUIRED_TOP_FIELDS = {"summary", "days", "totalEstimatedCostPerPerson", "tradeO
 CRITIC_SYSTEM_PROMPT = """You are a strict travel itinerary evaluator.
 
 Validate:
-1. Budget alignment — the recommended budget is a TARGET, not an exact cap.
-   The acceptable range is from the minimum budget to the maximum budget provided in the constraints.
-   Any totalEstimatedCostPerPerson within this min–max range is ACCEPTABLE. Do NOT reject it.
-   Only flag budget as a violation if the cost falls OUTSIDE the min–max range.
-2. Duration correctness (days array length must match durationDays)
-3. Respect for non-negotiables (these are hard constraints the group WANTS, e.g. "no-flights" = never include flights, "smoking-allowed" = smoking IS permitted — do NOT penalize for it)
-4. Realistic activity pacing (only flag if a day is clearly impossible)
-5. Fair handling of preference conflicts (tradeOffExplanation must address them)
-6. Route logistics — the itinerary must include realistic travel from source to destination on Day 1 and the return journey on the last day, with appropriate transport options.
+1. Respect for non-negotiables (these are hard constraints the group WANTS, e.g. "no-flights" = never include flights, "smoking-allowed" = smoking IS permitted — do NOT penalize for it)
+2. Realistic activity pacing (only flag if a day is clearly impossible)
+3. Fair handling of preference conflicts (tradeOffExplanation must address them)
+4. Route logistics — the itinerary must include realistic travel from source to destination on Day 1 and the return journey on the last day, with appropriate transport options.
+
+Already checked in code, so do NOT flag: budget, number of days, cost arithmetic.
+Overnight travel (e.g. leaving at 2 PM and arriving at 2 AM) is normal and is NOT a violation.
+A day that is mostly travel, with few or no activities, is normal and is NOT a violation.
 
 Return STRICT JSON:
 
@@ -38,7 +37,7 @@ Return STRICT JSON:
 Rules:
 - "isValid" should be true if there are no real problems.
 - "violations" must ONLY contain concrete, factual problems. Never include passing checks.
-- Budget within the min–max range is NEVER a violation, even if it differs from the recommended amount.
+- Budget is NEVER a violation here; code already checked it.
 - Vague concerns ("may be high", "might feel rushed", "does not explicitly state") are NOT violations.
 - Food preference (e.g. "non-veg") has nothing to do with alcohol. Do NOT conflate them.
 - When in doubt, mark as valid.
@@ -76,8 +75,28 @@ def _run_structural_checks(itinerary, trip, aggregated_data):
         if not isinstance(day.get("estimatedCostPerPerson"), (int, float)):
             issues.append(f"Day {i+1}: estimatedCostPerPerson must be a number")
 
-    if not isinstance(itinerary.get("totalEstimatedCostPerPerson"), (int, float)):
+    total = itinerary.get("totalEstimatedCostPerPerson")
+    if not isinstance(total, (int, float)):
         issues.append("totalEstimatedCostPerPerson must be a number")
+        return issues
+
+    # Budget is a number comparison, so it belongs here rather than with the
+    # LLM reviewer (which approved a plan outside the range in production).
+    # Only the maximum is enforced: a realistic plan cheaper than the group's
+    # minimum is fine, and rejecting it just teaches the planner to pad costs.
+    max_budget = (aggregated_data or {}).get("budget", {}).get("max")
+    if isinstance(max_budget, (int, float)) and total > max_budget:
+        issues.append(
+            f"Total cost ₹{total:g}/person is over the group's maximum budget of ₹{max_budget:g}"
+        )
+
+    day_costs = [d.get("estimatedCostPerPerson") for d in itinerary.get("days", [])]
+    if day_costs and all(isinstance(c, (int, float)) for c in day_costs):
+        day_sum = sum(day_costs)
+        if abs(day_sum - total) > max(100, 0.1 * total):
+            issues.append(
+                f"totalEstimatedCostPerPerson (₹{total:g}) doesn't match the sum of the days (₹{day_sum:g})"
+            )
 
     return issues
 
@@ -140,9 +159,14 @@ def critic_node(state):
         for issue in structural_issues:
             print(f"     ❌ {issue}")
         print(f"\n  🚫 Verdict: REJECTED (structural — {len(structural_issues)} issue(s))")
+        over_budget = any("over the group's maximum budget" in i for i in structural_issues)
         state["repair_instructions"] = {
             "violations": structural_issues,
-            "repairInstructions": {"budgetAdjustment": "ok", "activityDensity": "ok", "conflictHandling": "ok"},
+            "repairInstructions": {
+                "budgetAdjustment": "decrease" if over_budget else "ok",
+                "activityDensity": "ok",
+                "conflictHandling": "ok",
+            },
             "feedback": "Fix structural issues before quality review"
         }
         _log_repair_payload(
@@ -150,6 +174,7 @@ def critic_node(state):
             state["repair_instructions"]["repairInstructions"],
             state["repair_instructions"]["feedback"],
         )
+        state["rejected_itinerary"] = itinerary
         state["itinerary"] = None
         state["attempt_count"] = state.get("attempt_count", 0) + 1
         return state
@@ -183,10 +208,12 @@ def critic_node(state):
             state["repair_instructions"]["repairInstructions"],
             state["repair_instructions"]["feedback"],
         )
+        state["rejected_itinerary"] = itinerary
         state["itinerary"] = None
         state["attempt_count"] = state.get("attempt_count", 0) + 1
     else:
         print("\n  ✅ Verdict: APPROVED")
         state["repair_instructions"] = None
+        state["rejected_itinerary"] = None
 
     return state

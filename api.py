@@ -59,6 +59,7 @@ def generate_itinerary_stream(req: TripRequest):
         "tool_results": {},
         "itinerary": None,
         "repair_instructions": None,
+        "rejected_itinerary": None,
         "attempt_count": 0,
     }
 

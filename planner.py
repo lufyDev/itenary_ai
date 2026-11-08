@@ -23,6 +23,66 @@ ITINERARY_SCHEMA = """{
 }"""
 
 
+_DAY_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "day": {"type": "integer"},
+        "morning": {"type": "string"},
+        "afternoon": {"type": "string"},
+        "evening": {"type": "string"},
+        "stay": {"type": "string"},
+        "estimatedCostPerPerson": {"type": "number"},
+    },
+    "required": ["day", "morning", "afternoon", "evening", "stay", "estimatedCostPerPerson"],
+    "additionalProperties": False,
+}
+
+
+def build_response_format(duration_days):
+    """Strict JSON schema for the planner's reply.
+
+    Plain JSON mode let the model split the days across two "days" keys, e.g.
+    {"days": [day 1], "totalEstimatedCostPerPerson": ..., "days": [day 2, day 3]}.
+    json.loads keeps only the last key, so day 1 vanished and the critic saw
+    a 1- or 2-day plan (6 of 10 runs on a 3-day trip). A strict schema rules
+    out duplicate keys, fixes the field order (days before the total), and
+    pins the number of days.
+    """
+    days_schema = {"type": "array", "items": _DAY_JSON_SCHEMA}
+    if isinstance(duration_days, int) and duration_days > 0:
+        days_schema["minItems"] = duration_days
+        days_schema["maxItems"] = duration_days
+
+    itinerary_schema = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "days": days_schema,
+            "totalEstimatedCostPerPerson": {"type": "number"},
+            "tradeOffExplanation": {"type": "string"},
+        },
+        "required": ["summary", "days", "totalEstimatedCostPerPerson", "tradeOffExplanation"],
+        "additionalProperties": False,
+    }
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "planner_decision",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["USE_TOOL", "ITINERARY"]},
+                    "itinerary": {"anyOf": [itinerary_schema, {"type": "null"}]},
+                },
+                "required": ["action", "itinerary"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
 SYSTEM_PROMPT = f"""You are an autonomous travel planning agent.
 
 Your goal is to create a realistic, budget-conscious itinerary grounded in verified data.
@@ -44,7 +104,7 @@ Tool Rules:
 Respond with valid JSON ONLY using ONE of these formats:
 
 TO USE A TOOL (only if Tool Results is empty):
-{{"action": "USE_TOOL"}}
+{{"action": "USE_TOOL", "itinerary": null}}
 
 TO FINALIZE (required if Tool Results has data):
 {{"action": "ITINERARY", "itinerary": <itinerary object>}}
@@ -56,6 +116,9 @@ Rules:
 - All costs are in INR (₹) per person.
 - Day 1 must include travel from the source city to the destination with specific transport options (bus, train, cab, etc.), estimated travel time, and cost.
 - The last day must include the return journey from destination back to source.
+- Travel times must add up. If the outbound journey takes about 12 hours, the return does too:
+  leaving after lunch on the last day means arriving in the middle of the night, not "8 PM".
+  Put each activity in the time slot it actually happens in.
 - The itinerary must cover the FULL trip duration. Never collapse a multi-day trip into a single day, even if some days are light or mostly travel.
 - If the trip duration is N days, the "days" array must contain exactly N objects, with day numbers 1 through N and no gaps.
 - If retrieved data is limited, still produce a complete N-day itinerary using the available evidence plus reasonable planning assumptions.
@@ -84,10 +147,29 @@ def planner_node(state):
     print(f"  📅 Duration: {duration} days")
     print(f"  📚 Has retrieved knowledge: {has_knowledge}")
 
-    repair_section = "None"
+    # The critic clears "itinerary" when it rejects a draft, so the rejected
+    # draft travels in its own key. Without it the planner starts from scratch
+    # and, given an almost identical prompt, returns an almost identical draft.
+    repair_section = ""
     if state.get("repair_instructions"):
-        repair_section = json.dumps(state["repair_instructions"], indent=2)
         print("  ⚠️  Re-running with repair feedback")
+        rejected = state.get("rejected_itinerary")
+        draft_part = (
+            f"""Your previous draft (REJECTED):
+{json.dumps(rejected, indent=2, ensure_ascii=False)}
+
+"""
+            if rejected
+            else ""
+        )
+        repair_section = f"""
+
+REVISION REQUIRED
+{draft_part}The critic rejected it for these reasons:
+{json.dumps(state["repair_instructions"], indent=2)}
+
+Revise the draft to fix every violation above. Keep the parts that were fine.
+Return the complete revised itinerary, not just the changed days."""
 
     user_prompt = f"""CURRENT TASK STATE
 
@@ -100,22 +182,20 @@ Aggregated Group Data:
 Existing Tool Results:
 {json.dumps(state.get("tool_results", {}), indent=2)}
 
-Repair Instructions (from critic):
-{repair_section}
-
 Additional Rules:
 - The "days" array MUST have exactly {duration} entries, numbered 1 to {duration}.
 - Expected day numbers are exactly: {list(range(1, duration + 1)) if isinstance(duration, int) and duration > 0 else f"1 to {duration}"}.
 - Never combine multiple trip days into one "day" object.
 - If you are missing details for some middle day, make the best realistic plan you can, but still return all {duration} days.
-- "totalEstimatedCostPerPerson" should be close to ₹{state["aggregated_data"].get("budget", {}).get("recommended")}.
+- "totalEstimatedCostPerPerson" must not exceed ₹{state["aggregated_data"].get("budget", {}).get("max")}. Aim near ₹{state["aggregated_data"].get("budget", {}).get("recommended")} when the plan genuinely costs that much; a cheaper realistic plan is fine.
+- "totalEstimatedCostPerPerson" must equal the sum of the days' "estimatedCostPerPerson".
 - Final self-check before responding:
   1. Is "action" set correctly?
   2. If action is "ITINERARY", does the itinerary include exactly {duration} day objects?
   3. Do Day 1 and Day {duration} include outbound and return travel respectively?
   4. If any answer is no, revise internally before returning JSON.
 
-Decide the NEXT BEST ACTION.
+Decide the NEXT BEST ACTION.{repair_section}
 """
 
     print("  🤖 Calling GPT-4o-mini...")
@@ -128,7 +208,7 @@ Decide the NEXT BEST ACTION.
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format={"type": "json_object"}
+            response_format=build_response_format(duration),
         )
 
         usage = response.usage
@@ -140,11 +220,11 @@ Decide the NEXT BEST ACTION.
         action = parsed.get("action", "UNKNOWN")
         print(f"  📋 LLM decided: {action}")
 
-        if action == "USE_TOOL":
+        if action == "USE_TOOL" or not parsed.get("itinerary"):
             state["itinerary"] = None
             print("  ➡️  Result: Requesting tool lookup")
         else:
-            state["itinerary"] = parsed.get("itinerary", parsed)
+            state["itinerary"] = parsed["itinerary"]
             days_count = len(state["itinerary"].get("days", [])) if isinstance(state["itinerary"], dict) else "?"
             total_cost = state["itinerary"].get("totalEstimatedCostPerPerson", "?") if isinstance(state["itinerary"], dict) else "?"
             print(f"  ✅ Itinerary generated — {days_count} days, ₹{total_cost}/person")
@@ -156,5 +236,15 @@ Decide the NEXT BEST ACTION.
     except Exception as e:
         print(f"  ❌ API error: {e}")
         state["itinerary"] = None
+
+    # After the one tool run, no itinerary means this attempt failed. Count it,
+    # so the graph retries a bounded number of times instead of looping.
+    if state["itinerary"] is None and state.get("tool_results"):
+        state["attempt_count"] = state.get("attempt_count", 0) + 1
+        state["repair_instructions"] = {
+            "violations": ["The planner did not return an itinerary"],
+            "repairInstructions": {"budgetAdjustment": "ok", "activityDensity": "ok", "conflictHandling": "ok"},
+            "feedback": "Return a complete itinerary with action ITINERARY",
+        }
 
     return state
