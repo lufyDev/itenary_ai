@@ -116,7 +116,9 @@ Content-Type: application/json
     "title": "Jibhi Weekend Getaway",
     "source": "Delhi",
     "destination": "Jibhi",
-    "durationDays": 3
+    "durationDays": 3,
+    "departurePreference": "evening",
+    "returnPreference": "morning"
   },
   "aggregated_data": {
     "source": "Delhi",
@@ -145,6 +147,8 @@ Content-Type: application/json
 | `trip.source` | Origin city (where the group is traveling from) |
 | `trip.destination` | Where the group is going |
 | `trip.durationDays` | Total number of days for the trip |
+| `trip.departurePreference` | Optional. When to leave the source: `morning`, `afternoon`, `evening` or `any` (default) |
+| `trip.returnPreference` | Optional. When to be back at the source, same values |
 | `aggregated_data.groupSize` | Number of people in the group |
 | `aggregated_data.budget` | Min/max/recommended budget per person (INR) |
 | `aggregated_data.majorityPreferences` | What most of the group voted for |
@@ -176,37 +180,55 @@ The final itinerary (found in the state when the planner produces it) looks like
 
 ```json
 {
-  "summary": "A 3-day adventure from Delhi to Jibhi...",
+  "summary": "A 3-day trip from Delhi to Jibhi, overnight bus both ways...",
   "days": [
     {
       "day": 1,
-      "morning": "Board overnight Volvo bus from Delhi ISBT to Aut...",
-      "afternoon": "Arrive at Aut, take local cab to Jibhi...",
-      "evening": "Check into Zostel Jibhi, explore nearby cafes...",
-      "stay": "Zostel Jibhi",
-      "estimatedCostPerPerson": 2500
+      "schedule": [
+        {"start": "19:00", "end": "19:45", "kind": "travel", "activity": "Metro to ISBT Kashmere Gate..."},
+        {"start": "20:30", "end": "06:30", "kind": "travel", "activity": "Overnight Volvo Delhi to Aut, ~10 hrs, ₹1,250..."}
+      ],
+      "stay": "Overnight Volvo (Delhi to Aut)",
+      "estimatedCostPerPerson": 1300
     },
     {
       "day": 2,
-      "morning": "Trek to Jalori Pass...",
-      "afternoon": "Visit Serolsar Lake...",
-      "evening": "Bonfire at the hostel, local dinner...",
-      "stay": "Zostel Jibhi",
-      "estimatedCostPerPerson": 1800
+      "schedule": [
+        {"start": "06:30", "end": "08:30", "kind": "travel", "activity": "Shared cab Aut to Jibhi..."},
+        {"start": "08:30", "end": "10:00", "kind": "rest", "activity": "Check in, breakfast..."},
+        {"start": "10:30", "end": "12:30", "kind": "activity", "activity": "Walk to Jibhi Waterfall..."}
+      ],
+      "stay": "Riverside guesthouse, Jibhi",
+      "estimatedCostPerPerson": 2400
     },
     {
       "day": 3,
-      "morning": "Visit Jibhi waterfall, explore local market...",
-      "afternoon": "Depart — cab to Aut, board Volvo back to Delhi...",
-      "evening": "In transit...",
-      "stay": "In transit",
-      "estimatedCostPerPerson": 2200
+      "schedule": [
+        {"start": "08:00", "end": "12:30", "kind": "activity", "activity": "Serolsar Lake trek..."},
+        {"start": "19:30", "end": "05:30", "kind": "travel", "activity": "Overnight Volvo Aut to Delhi..."}
+      ],
+      "stay": "Overnight Volvo (Aut to Delhi)",
+      "estimatedCostPerPerson": 2900
     }
   ],
-  "totalEstimatedCostPerPerson": 6500,
+  "totalEstimatedCostPerPerson": 6600,
   "tradeOffExplanation": "The group had a mix of budget and adventure preferences..."
 }
 ```
+
+Each day is a list of timed entries (24-hour `HH:MM`, `kind` is `travel`, `activity`, `meal` or `rest`). An entry whose `end` is earlier than its `start` runs past midnight: an overnight bus is one entry, it ends its day, and the next day can't start before it arrives. Days are calendar dates, so Day 1 is the date the group leaves.
+
+The trip can carry `departurePreference` (when to leave the source) and `returnPreference` (when to be back there), each `morning` (04:00–11:59), `afternoon` (12:00–16:59), `evening` (17:00–23:59) or `any` (the default).
+
+What code checks and fixes, without the LLM (`schedule.py`, `planner.py`):
+- entries in time order with no overlaps; an overnight entry is the last of its day
+- entries the planner put after an overnight bus on the same day move to the next morning, when they fit
+- the return leg takes about as long as the outbound one
+- no day after Day 1 starts after midday (a wasted last morning)
+- Day 1's first travel starts in the departure window; the last travel arrives in the return window, with the rejection working out when to leave
+- the trip total is recomputed as the sum of the day costs
+
+Itineraries saved before this format have `morning` / `afternoon` / `evening` strings instead of `schedule`; the frontend renders both.
 
 All costs are in **INR (₹) per person**. Day 1 always includes travel from the source city, and the last day includes the return journey.
 

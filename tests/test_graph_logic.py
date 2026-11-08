@@ -22,8 +22,9 @@ TRIP = {"title": "Delhi to Bir", "source": "Delhi", "destination": "Bir", "durat
 
 
 def day(n, cost):
-    return {"day": n, "morning": "m", "afternoon": "a", "evening": "e", "stay": "s",
-            "estimatedCostPerPerson": cost}
+    return {"day": n, "schedule": [{"start": "09:00", "end": "11:00", "kind": "activity",
+                                    "activity": "a"}],
+            "stay": "s", "estimatedCostPerPerson": cost}
 
 
 def itinerary(costs, total=None):

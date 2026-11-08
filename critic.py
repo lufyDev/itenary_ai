@@ -1,12 +1,13 @@
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
+from schedule import check_schedules
 
 load_dotenv()
 
 client = OpenAI()
 
-REQUIRED_DAY_FIELDS = {"day", "morning", "afternoon", "evening", "stay", "estimatedCostPerPerson"}
+REQUIRED_DAY_FIELDS = {"day", "schedule", "stay", "estimatedCostPerPerson"}
 REQUIRED_TOP_FIELDS = {"summary", "days", "totalEstimatedCostPerPerson", "tradeOffExplanation"}
 
 CRITIC_SYSTEM_PROMPT = """You are a strict travel itinerary evaluator.
@@ -17,7 +18,7 @@ Validate:
 3. Fair handling of preference conflicts (tradeOffExplanation must address them)
 4. Route logistics — the itinerary must include realistic travel from source to destination on Day 1 and the return journey on the last day, with appropriate transport options.
 
-Already checked in code, so do NOT flag: budget, number of days, cost arithmetic.
+Already checked in code, so do NOT flag: budget, number of days, cost arithmetic, anything about times: entry order, overlaps, overnight journeys, empty mornings, preferred departure and return times, journey durations.
 Overnight travel (e.g. leaving at 2 PM and arriving at 2 AM) is normal and is NOT a violation.
 A day that is mostly travel, with few or no activities, is normal and is NOT a violation.
 
@@ -74,6 +75,9 @@ def _run_structural_checks(itinerary, trip, aggregated_data):
             issues.append(f"Day {i+1} missing fields: {missing}")
         if not isinstance(day.get("estimatedCostPerPerson"), (int, float)):
             issues.append(f"Day {i+1}: estimatedCostPerPerson must be a number")
+
+    if not any("missing fields" in i for i in issues):
+        issues.extend(check_schedules(itinerary.get("days", []), trip))
 
     total = itinerary.get("totalEstimatedCostPerPerson")
     if not isinstance(total, (int, float)):

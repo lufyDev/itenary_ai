@@ -1,6 +1,7 @@
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
+from schedule import ENTRY_KINDS, TIME_PATTERN, move_entries_after_overnight, window_text
 
 load_dotenv()
 
@@ -11,10 +12,15 @@ ITINERARY_SCHEMA = """{
   "days": [
     {
       "day": 1,
-      "morning": "string — morning activity with details",
-      "afternoon": "string — afternoon activity with details",
-      "evening": "string — evening activity with details",
-      "stay": "string — accommodation name and type",
+      "schedule": [
+        {
+          "start": "HH:MM — 24-hour start time",
+          "end": "HH:MM — 24-hour end time (earlier than start if it runs past midnight)",
+          "kind": "travel | activity | meal | rest",
+          "activity": "string — what happens, with specific places, transport and costs"
+        }
+      ],
+      "stay": "string — accommodation name and type, or the overnight bus/train",
       "estimatedCostPerPerson": 0
     }
   ],
@@ -23,17 +29,27 @@ ITINERARY_SCHEMA = """{
 }"""
 
 
+_ENTRY_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "start": {"type": "string", "pattern": TIME_PATTERN},
+        "end": {"type": "string", "pattern": TIME_PATTERN},
+        "kind": {"type": "string", "enum": ENTRY_KINDS},
+        "activity": {"type": "string"},
+    },
+    "required": ["start", "end", "kind", "activity"],
+    "additionalProperties": False,
+}
+
 _DAY_JSON_SCHEMA = {
     "type": "object",
     "properties": {
         "day": {"type": "integer"},
-        "morning": {"type": "string"},
-        "afternoon": {"type": "string"},
-        "evening": {"type": "string"},
+        "schedule": {"type": "array", "items": _ENTRY_JSON_SCHEMA, "minItems": 1},
         "stay": {"type": "string"},
         "estimatedCostPerPerson": {"type": "number"},
     },
-    "required": ["day", "morning", "afternoon", "evening", "stay", "estimatedCostPerPerson"],
+    "required": ["day", "schedule", "stay", "estimatedCostPerPerson"],
     "additionalProperties": False,
 }
 
@@ -116,9 +132,28 @@ Rules:
 - All costs are in INR (₹) per person.
 - Day 1 must include travel from the source city to the destination with specific transport options (bus, train, cab, etc.), estimated travel time, and cost.
 - The last day must include the return journey from destination back to source.
-- Travel times must add up. If the outbound journey takes about 12 hours, the return does too:
-  leaving after lunch on the last day means arriving in the middle of the night, not "8 PM".
-  Put each activity in the time slot it actually happens in.
+- Timings:
+  - Days are calendar dates. Day 1 is the date the group leaves the source city, so if they
+    leave in the evening, Day 1 holds little more than getting to the bus/train and the
+    departure. Arrival and check-in belong to the date they actually happen.
+  - Each day is a "schedule": entries in time order, each with a 24-hour start and end time
+    ("06:30", "18:00"). Entries must not overlap.
+  - Give every entry a realistic duration: real travel times between places, time to see a
+    sight, meals. "kind" is "travel" for any journey (bus, train, cab, walk between areas),
+    "meal" for breakfast/lunch/dinner, "rest" for check-in, free time or sleep, "activity"
+    for everything else.
+  - A journey is ONE travel entry: "start" is when it departs, "end" is when it arrives.
+    Never add a separate "arrive" entry.
+  - An overnight journey is one entry whose end time is earlier than its start, because it
+    arrives the next day. It must be the LAST entry of its day, and the next day's first entry
+    must start at or after its arrival. Example, overnight bus out on Day 1 and back on Day 3:
+      Day 1: {{"start": "18:00", "end": "06:00", "kind": "travel", "activity": "Overnight Volvo Delhi to Manali ..."}}
+      Day 2: {{"start": "06:30", "end": "07:30", "kind": "rest", "activity": "Check in at ..."}}, ...
+      Day 3: ..., {{"start": "17:00", "end": "07:00", "kind": "travel", "activity": "Overnight Volvo Manali to Delhi ..."}}
+    On an overnight day, "stay" is the bus or train, not a hotel.
+  - Use every day at the destination: on the last day, plan the morning there before the
+    return journey (e.g. a sight and lunch before a 17:00 bus).
+  - Travel times must add up. If the outbound journey takes about 12 hours, the return does too.
 - The itinerary must cover the FULL trip duration. Never collapse a multi-day trip into a single day, even if some days are light or mostly travel.
 - If the trip duration is N days, the "days" array must contain exactly N objects, with day numbers 1 through N and no gaps.
 - If retrieved data is limited, still produce a complete N-day itinerary using the available evidence plus reasonable planning assumptions.
@@ -128,6 +163,43 @@ Rules:
 - Never violate any non-negotiable constraint.
 - Always use specific, real accommodation names from the retrieved data (e.g. "Zostel Shoja", "Mudhouse Hostel"). Never use generic placeholders like "Budget Hotel" or "Local Guesthouse".
 """
+
+
+def _total_from_days(itinerary):
+    """Sets the trip total to the sum of the day costs.
+
+    The total is derived data and the model can't add: it wrote a ₹7,600 total
+    over days summing to ₹5,600 and repeated it through all three revisions.
+    Summing here means the budget check judges the real figure.
+    """
+    costs = [d.get("estimatedCostPerPerson") for d in itinerary.get("days", [])]
+    if costs and all(isinstance(c, (int, float)) for c in costs):
+        total = sum(costs)
+        if total != itinerary.get("totalEstimatedCostPerPerson"):
+            print(f"  🧮 Total set to the day sum: ₹{itinerary.get('totalEstimatedCostPerPerson')} → ₹{total:g}")
+        itinerary["totalEstimatedCostPerPerson"] = total
+
+
+def _timing_preference_rules(trip):
+    """Prompt lines for the group's preferred departure and return times."""
+    source = trip.get("source", "the starting city")
+    lines = []
+    leave = window_text(trip.get("departurePreference"))
+    if leave:
+        lines.append(
+            f"- The group wants to LEAVE {source} in the {leave}. Day 1's first travel entry must "
+            "start in that window. Pick the transport that fits (e.g. an overnight bus or train "
+            "for an evening departure on a long route)."
+        )
+    back = window_text(trip.get("returnPreference"))
+    if back:
+        lines.append(
+            f"- The group wants to ARRIVE BACK in {source} in the {back}. The last travel entry "
+            "on the last day must END in that window. Work backwards from the journey time to "
+            "choose when to leave: on a 12-hour route, a morning arrival means an overnight "
+            "journey the evening before, and an evening arrival means leaving early that morning."
+        )
+    return "".join(line + "\n" for line in lines)
 
 
 def planner_node(state):
@@ -142,6 +214,7 @@ def planner_node(state):
     destination = state["trip"].get("destination", state["trip"].get("title", "Unknown"))
     duration = state["trip"].get("durationDays", "?")
     tool_results = state.get("tool_results", {})
+    timing_rules = _timing_preference_rules(state["trip"])
     has_knowledge = any(tool_results.get(k) for k in ("research", "stays", "transport"))
     print(f"  📍 Route: {source} → {destination}")
     print(f"  📅 Duration: {duration} days")
@@ -188,8 +261,8 @@ Additional Rules:
 - Never combine multiple trip days into one "day" object.
 - If you are missing details for some middle day, make the best realistic plan you can, but still return all {duration} days.
 - "totalEstimatedCostPerPerson" must not exceed ₹{state["aggregated_data"].get("budget", {}).get("max")}. Aim near ₹{state["aggregated_data"].get("budget", {}).get("recommended")} when the plan genuinely costs that much; a cheaper realistic plan is fine.
-- "totalEstimatedCostPerPerson" must equal the sum of the days' "estimatedCostPerPerson".
-- Final self-check before responding:
+- "totalEstimatedCostPerPerson" is the sum of the days' "estimatedCostPerPerson" (code recomputes it).
+{timing_rules}- Final self-check before responding:
   1. Is "action" set correctly?
   2. If action is "ITINERARY", does the itinerary include exactly {duration} day objects?
   3. Do Day 1 and Day {duration} include outbound and return travel respectively?
@@ -225,6 +298,10 @@ Decide the NEXT BEST ACTION.{repair_section}
             print("  ➡️  Result: Requesting tool lookup")
         else:
             state["itinerary"] = parsed["itinerary"]
+            _total_from_days(state["itinerary"])
+            moved = move_entries_after_overnight(state["itinerary"].get("days", []))
+            if moved:
+                print(f"  🌙 Moved {moved} entr{'y' if moved == 1 else 'ies'} that followed an overnight journey to the next day")
             days_count = len(state["itinerary"].get("days", [])) if isinstance(state["itinerary"], dict) else "?"
             total_cost = state["itinerary"].get("totalEstimatedCostPerPerson", "?") if isinstance(state["itinerary"], dict) else "?"
             print(f"  ✅ Itinerary generated — {days_count} days, ₹{total_cost}/person")

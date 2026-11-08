@@ -1,6 +1,7 @@
 import json
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from typing import Literal
 from pydantic import BaseModel
 from graph import graph
 
@@ -19,11 +20,17 @@ class MajorityPreferences(BaseModel):
     accommodationType: str
 
 
+TimePreference = Literal["morning", "afternoon", "evening", "any"]
+
+
 class Trip(BaseModel):
     title: str
     source: str
     destination: str
     durationDays: int
+    # When the group wants to leave the source, and to be back there at the end.
+    departurePreference: TimePreference = "any"
+    returnPreference: TimePreference = "any"
 
 
 class AggregatedData(BaseModel):

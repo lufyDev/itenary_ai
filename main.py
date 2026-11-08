@@ -11,6 +11,8 @@ initial_state = {
         "source": "Delhi",
         "destination": "Jibhi",
         "durationDays": 3,
+        "departurePreference": "evening",
+        "returnPreference": "morning",
     },
      "aggregated_data": {
         "source": "Delhi",
