@@ -89,8 +89,9 @@ class PlannerSchema(unittest.TestCase):
         return itin["properties"]["days"]
 
     def test_pins_day_count(self):
+        # 3 days there, plus up to two travel days (Day 0 and Day 4).
         days = self.days_schema(3)
-        self.assertEqual((days["minItems"], days["maxItems"]), (3, 3))
+        self.assertEqual((days["minItems"], days["maxItems"]), (3, 5))
 
     def test_unknown_duration_leaves_count_open(self):
         self.assertNotIn("minItems", self.days_schema("?"))

@@ -7,6 +7,12 @@ AFTERNOON of the same day, and an overnight bus had no honest place to go.
 Each day is now a list of entries with a start and end time, so an overnight
 leg is one entry whose end time is earlier than its start (it ran past
 midnight), and the next day can't begin before it arrives.
+
+Day numbers: a trip of N days means N days AT the destination (Day 1 to N).
+Journeys that would eat into them get their own travel days: Day 0, the day
+before Day 1 (e.g. the Friday-night bus for a Sat-Sun-Mon trip), and Day N+1,
+the day after Day N (a long daytime return). An overnight return leaves on the
+evening of Day N and needs no extra day.
 """
 
 ENTRY_KINDS = ["travel", "activity", "meal", "rest"]
@@ -59,6 +65,26 @@ def _in_window(minutes, preference):
     return window[0] <= minutes <= window[1]
 
 
+def drop_zero_length_entries(days):
+    """Removes entries whose start and end are the same time.
+
+    They mean nothing (zero minutes, or exactly 24 hours). The planner left a
+    "16:00-16:00 bus to Delhi" on Day N after moving the real return to Day N+1.
+    Mutates `days` and returns how many were dropped.
+    """
+    dropped = 0
+    for day in days:
+        entries = day.get("schedule")
+        if not isinstance(entries, list):
+            continue
+        kept = [x for x in entries
+                if to_minutes(x.get("start")) is None or x.get("start") != x.get("end")]
+        if kept and len(kept) != len(entries):
+            dropped += len(entries) - len(kept)
+            day["schedule"] = kept
+    return dropped
+
+
 def move_entries_after_overnight(days):
     """Moves entries that follow an overnight journey to the start of the next day.
 
@@ -99,6 +125,30 @@ def _fits_before_next_day(entries, arrival, next_day_entries):
         cursor = end
     next_first = to_minutes((next_day_entries or [{}])[0].get("start")) if next_day_entries else None
     return next_first is None or cursor <= next_first
+
+
+# A journey this long on Day 1 or Day N eats most of a day at the destination.
+LONG_JOURNEY = 6 * 60
+
+
+def check_day_numbers(days, duration):
+    """Days must be 1..N, optionally with travel days 0 and N+1 around them."""
+    numbers = [d.get("day") for d in days]
+    if not isinstance(duration, int) or duration < 1:
+        return []
+    allowed = [list(range(first, last + 1)) for first in (0, 1) for last in (duration, duration + 1)]
+    if numbers in allowed:
+        return []
+    return [
+        f"Duration mismatch: the days must be Day 1 to Day {duration} at the destination, "
+        f"optionally with Day 0 (travel out, the day before Day 1) first and Day {duration + 1} "
+        f"(travel back, the day after Day {duration}) last. Got days {numbers}."
+    ]
+
+
+def _day_number(day, fallback):
+    number = day.get("day")
+    return number if isinstance(number, int) else fallback
 
 
 def check_schedules(days, trip):
@@ -154,7 +204,43 @@ def check_schedules(days, trip):
             carried_until = None
 
     issues.extend(_check_empty_mornings(days, trip))
+    issues.extend(_check_travel_days(days, trip))
     issues.extend(_check_preferences(days, trip))
+    return issues
+
+
+def _check_travel_days(days, trip):
+    """A long journey belongs on Day 0 / Day N+1, not inside the holiday days.
+
+    "3 days in Manali" means Sat, Sun and Mon there: leave Friday evening, be
+    back Tuesday morning. A 12-hour bus on Day 1 turns that into 2 days.
+    """
+    duration = trip.get("durationDays")
+    if not days or not isinstance(duration, int):
+        return []
+    issues = []
+
+    first = days[0]
+    if _day_number(first, 1) == 1:
+        out = _main_leg(first)
+        if out and _length(out) >= LONG_JOURNEY:
+            issues.append(
+                f"The journey out ({out['start']} to {out['end']}, {_hours(_length(out))}) takes up "
+                "Day 1, which is a day at the destination. Put it on Day 0, the day before Day 1, "
+                "so the group arrives by Day 1 morning (e.g. an overnight bus on the evening of Day 0)."
+            )
+
+    last = days[-1]
+    if _day_number(last, len(days)) == duration and len(days) > 1:
+        travel = _travel_entries(last)
+        back = max(travel, key=_length) if travel else None
+        if back and to_minutes(back["end"]) > to_minutes(back["start"]) and _length(back) >= LONG_JOURNEY:
+            issues.append(
+                f"The journey back ({back['start']} to {back['end']}, {_hours(_length(back))}) takes "
+                f"up Day {duration}, which is a day at the destination. Either take an overnight "
+                f"journey leaving on the evening of Day {duration}, or put it on Day {duration + 1}, "
+                f"the day after Day {duration}."
+            )
     return issues
 
 
@@ -162,20 +248,28 @@ LATEST_FIRST_ENTRY = 12 * 60
 
 
 def _check_empty_mornings(days, trip):
-    """Flags a day after Day 1 with nothing planned before midday.
+    """Flags a day at the destination with nothing planned before midday.
 
     The usual case is the last day: an overnight bus home at 16:00 and nothing
-    before it, so a morning at the destination is wasted. Day 1 is exempt,
-    since the group is at home until it leaves.
+    before it, so a morning at the destination is wasted. Travel days (0 and
+    N+1) are exempt, and so is Day 1 when there's no Day 0, since the group
+    may be travelling from home that morning.
     """
     issues = []
     destination = trip.get("destination", "the destination")
-    for index, day in enumerate(days[1:], start=2):
+    duration = trip.get("durationDays")
+    has_day_zero = bool(days) and _day_number(days[0], 1) == 0
+    for index, day in enumerate(days):
+        number = _day_number(day, index + 1)
+        if number < 1 or (isinstance(duration, int) and number > duration):
+            continue
+        if number == 1 and not has_day_zero:
+            continue
         entries = day.get("schedule") or []
         first = to_minutes(entries[0].get("start")) if entries else None
         if first is not None and first > LATEST_FIRST_ENTRY:
             issues.append(
-                f"Day {day.get('day', index)} has nothing planned before {entries[0]['start']}. "
+                f"Day {number} has nothing planned before {entries[0]['start']}. "
                 f"Plan the morning in {destination} (sights, breakfast, lunch) before it."
             )
     return issues
@@ -236,12 +330,15 @@ def _check_preferences(days, trip):
     departure = trip.get("departurePreference", "any")
     if departure in PREFERENCE_WINDOWS:
         travel = _travel_entries(days[0])
+        first_day = f"Day {_day_number(days[0], 1)}"
         if not travel:
-            issues.append(f"Day 1 has no travel entry for leaving {source}")
+            issues.append(f"{first_day} has no travel entry for leaving {source}")
         elif not _in_window(to_minutes(travel[0]["start"]), departure):
             issues.append(
                 f"The group wants to leave {source} in the {window_text(departure)}, "
-                f"but Day 1's first travel starts at {travel[0]['start']}"
+                f"but {first_day}'s first travel starts at {travel[0]['start']}. Depart in that "
+                f"window even if an overnight option exists (e.g. a day bus or train on Day 0 that "
+                f"arrives the same day)."
             )
 
     back = trip.get("returnPreference", "any")
@@ -252,12 +349,13 @@ def _check_preferences(days, trip):
         elif not _in_window(to_minutes(travel[-1]["end"]), back):
             outbound = _main_leg(days[0]) if len(days) > 1 else None
             journey = _length(outbound) if outbound else _length(travel[-1])
-            issues.append(_late_or_early_return(travel[-1], journey, back, source, trip.get("destination")))
+            issues.append(_late_or_early_return(
+                travel[-1], journey, back, source, trip.get("destination"), trip.get("durationDays")))
 
     return issues
 
 
-def _late_or_early_return(entry, journey, preference, source, destination):
+def _late_or_early_return(entry, journey, preference, source, destination, duration=None):
     """The rejection for a return at the wrong time, with the maths done.
 
     "Arrive in the evening" on a 13-hour route means leaving before 11:00, and
@@ -267,12 +365,20 @@ def _late_or_early_return(entry, journey, preference, source, destination):
     be the thing that's wrong.
     """
     window_start, window_end = PREFERENCE_WINDOWS[preference]
-    leave_from = fmt((window_start - journey) % (24 * 60))
-    leave_by = fmt((window_end - journey) % (24 * 60))
+    leave_from = (window_start - journey) % (24 * 60)
+    leave_by = (window_end - journey) % (24 * 60)
+    if not isinstance(duration, int):
+        when = "on the last day"
+    elif 4 * 60 <= leave_from < 12 * 60:
+        # A morning departure that still arrives in time: a daytime journey,
+        # which belongs on its own travel day rather than eating Day N.
+        when = f"on Day {duration + 1}, the day after Day {duration}"
+    else:
+        when = f"on Day {duration}"
     return (
         f"The group wants to be back in {source} in the {window_text(preference)}, but the "
         f"return ({entry['start']} to {entry['end']}) arrives at {entry['end']}. The journey "
         f"takes about {_hours(journey)}, so leave {destination or 'the destination'} between "
-        f"{leave_from} and {leave_by} on the last day. The return is one travel entry whose "
-        f"\"end\" is the arrival time; plan the rest of the last day around it."
+        f"{fmt(leave_from)} and {fmt(leave_by)} {when}. The return is one travel entry whose "
+        f"\"end\" is the arrival time."
     )

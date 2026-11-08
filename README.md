@@ -146,7 +146,7 @@ Content-Type: application/json
 | `trip.title` | Name of the trip |
 | `trip.source` | Origin city (where the group is traveling from) |
 | `trip.destination` | Where the group is going |
-| `trip.durationDays` | Total number of days for the trip |
+| `trip.durationDays` | Days at the destination (travel days before and after aren't counted) |
 | `trip.departurePreference` | Optional. When to leave the source: `morning`, `afternoon`, `evening` or `any` (default) |
 | `trip.returnPreference` | Optional. When to be back at the source, same values |
 | `aggregated_data.groupSize` | Number of people in the group |
@@ -180,10 +180,10 @@ The final itinerary (found in the state when the planner produces it) looks like
 
 ```json
 {
-  "summary": "A 3-day trip from Delhi to Jibhi, overnight bus both ways...",
+  "summary": "Two days in Jibhi, overnight bus both ways...",
   "days": [
     {
-      "day": 1,
+      "day": 0,
       "schedule": [
         {"start": "19:00", "end": "19:45", "kind": "travel", "activity": "Metro to ISBT Kashmere Gate..."},
         {"start": "20:30", "end": "06:30", "kind": "travel", "activity": "Overnight Volvo Delhi to Aut, ~10 hrs, ₹1,250..."}
@@ -192,7 +192,7 @@ The final itinerary (found in the state when the planner produces it) looks like
       "estimatedCostPerPerson": 1300
     },
     {
-      "day": 2,
+      "day": 1,
       "schedule": [
         {"start": "06:30", "end": "08:30", "kind": "travel", "activity": "Shared cab Aut to Jibhi..."},
         {"start": "08:30", "end": "10:00", "kind": "rest", "activity": "Check in, breakfast..."},
@@ -202,7 +202,7 @@ The final itinerary (found in the state when the planner produces it) looks like
       "estimatedCostPerPerson": 2400
     },
     {
-      "day": 3,
+      "day": 2,
       "schedule": [
         {"start": "08:00", "end": "12:30", "kind": "activity", "activity": "Serolsar Lake trek..."},
         {"start": "19:30", "end": "05:30", "kind": "travel", "activity": "Overnight Volvo Aut to Delhi..."}
@@ -216,7 +216,9 @@ The final itinerary (found in the state when the planner produces it) looks like
 }
 ```
 
-Each day is a list of timed entries (24-hour `HH:MM`, `kind` is `travel`, `activity`, `meal` or `rest`). An entry whose `end` is earlier than its `start` runs past midnight: an overnight bus is one entry, it ends its day, and the next day can't start before it arrives. Days are calendar dates, so Day 1 is the date the group leaves.
+Each day is a list of timed entries (24-hour `HH:MM`, `kind` is `travel`, `activity`, `meal` or `rest`). An entry whose `end` is earlier than its `start` runs past midnight: an overnight bus is one entry, it ends its day, and the next day can't start before it arrives. Days are calendar dates.
+
+`durationDays` counts days **at the destination** (Day 1 to Day N). Journeys don't eat into them: a long journey out goes on **Day 0**, the day before Day 1, and a long daytime journey back goes on **Day N+1**. An overnight return leaves on the evening of Day N and needs no extra day. So a "3-day" Delhi→Manali trip is Day 0 (Friday-night bus), Days 1–3 (Sat–Mon), and an overnight bus home from Day 3 arriving Tuesday morning. The example above is the 2-day demo trip.
 
 The trip can carry `departurePreference` (when to leave the source) and `returnPreference` (when to be back there), each `morning` (04:00–11:59), `afternoon` (12:00–16:59), `evening` (17:00–23:59) or `any` (the default).
 
@@ -224,7 +226,10 @@ What code checks and fixes, without the LLM (`schedule.py`, `planner.py`):
 - entries in time order with no overlaps; an overnight entry is the last of its day
 - entries the planner put after an overnight bus on the same day move to the next morning, when they fit
 - the return leg takes about as long as the outbound one
-- no day after Day 1 starts after midday (a wasted last morning)
+- days are numbered 1..N, with optional travel days 0 and N+1
+- a 6+ hour journey on Day 1 or a daytime one on Day N gets sent to Day 0 / Day N+1
+- no day at the destination starts after midday (a wasted last morning)
+- zero-length entries are dropped
 - Day 1's first travel starts in the departure window; the last travel arrives in the return window, with the rejection working out when to leave
 - the trip total is recomputed as the sum of the day costs
 

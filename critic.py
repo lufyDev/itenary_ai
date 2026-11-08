@@ -1,7 +1,7 @@
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
-from schedule import check_schedules
+from schedule import check_day_numbers, check_schedules
 
 load_dotenv()
 
@@ -16,7 +16,9 @@ Validate:
 1. Respect for non-negotiables (these are hard constraints the group WANTS, e.g. "no-flights" = never include flights, "smoking-allowed" = smoking IS permitted — do NOT penalize for it)
 2. Realistic activity pacing (only flag if a day is clearly impossible)
 3. Fair handling of preference conflicts (tradeOffExplanation must address them)
-4. Route logistics — the itinerary must include realistic travel from source to destination on Day 1 and the return journey on the last day, with appropriate transport options.
+4. Route logistics — the itinerary must include realistic travel from the source to the destination and back, with appropriate transport options.
+
+Day 1 to Day N are the days at the destination. A "Day 0" (travel out, the day before Day 1) and a final "Day N+1" (travel back) are deliberate travel days: they are correct, not extra days.
 
 Already checked in code, so do NOT flag: budget, number of days, cost arithmetic, anything about times: entry order, overlaps, overnight journeys, empty mornings, preferred departure and return times, journey durations.
 Overnight travel (e.g. leaving at 2 PM and arriving at 2 AM) is normal and is NOT a violation.
@@ -64,10 +66,7 @@ def _run_structural_checks(itinerary, trip, aggregated_data):
     if missing_top:
         issues.append(f"Missing top-level fields: {missing_top}")
 
-    expected_days = trip.get("durationDays")
-    actual_days = len(itinerary.get("days", []))
-    if expected_days and actual_days != expected_days:
-        issues.append(f"Duration mismatch: expected {expected_days} days, got {actual_days}")
+    issues.extend(check_day_numbers(itinerary.get("days", []), trip.get("durationDays")))
 
     for i, day in enumerate(itinerary.get("days", [])):
         missing = REQUIRED_DAY_FIELDS - set(day.keys())
@@ -194,6 +193,16 @@ def critic_node(state):
     feedback = review.get("feedback", "")
 
     print(f"  📝 Feedback: {feedback}")
+
+    # Budget is checked in code; the LLM still flags "over the recommended
+    # budget" now and then despite being told not to, and a rejection for it
+    # costs a whole revision.
+    ignored = [v for v in violations if "budget" in v.lower()]
+    if ignored:
+        print(f"  🙈 Ignoring {len(ignored)} budget complaint(s) from the LLM review (checked in code)")
+        violations = [v for v in violations if v not in ignored]
+        if not violations:
+            is_valid = True
 
     if not is_valid and violations:
         for v in violations:

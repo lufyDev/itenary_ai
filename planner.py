@@ -1,7 +1,13 @@
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
-from schedule import ENTRY_KINDS, TIME_PATTERN, move_entries_after_overnight, window_text
+from schedule import (
+    ENTRY_KINDS,
+    TIME_PATTERN,
+    drop_zero_length_entries,
+    move_entries_after_overnight,
+    window_text,
+)
 
 load_dotenv()
 
@@ -62,12 +68,13 @@ def build_response_format(duration_days):
     json.loads keeps only the last key, so day 1 vanished and the critic saw
     a 1- or 2-day plan (6 of 10 runs on a 3-day trip). A strict schema rules
     out duplicate keys, fixes the field order (days before the total), and
-    pins the number of days.
+    pins the number of days: N days at the destination plus up to two travel
+    days (Day 0 before, Day N+1 after). Code checks the numbering.
     """
     days_schema = {"type": "array", "items": _DAY_JSON_SCHEMA}
     if isinstance(duration_days, int) and duration_days > 0:
         days_schema["minItems"] = duration_days
-        days_schema["maxItems"] = duration_days
+        days_schema["maxItems"] = duration_days + 2
 
     itinerary_schema = {
         "type": "object",
@@ -103,8 +110,8 @@ SYSTEM_PROMPT = f"""You are an autonomous travel planning agent.
 
 Your goal is to create a realistic, budget-conscious itinerary grounded in verified data.
 The trip has an explicit SOURCE (origin city) and DESTINATION. You must plan the full journey
-from source to destination, including realistic travel logistics on Day 1 (departure) and
-the return journey on the last day.
+from source to destination and back, with realistic travel logistics, around the days the
+group spends at the destination.
 
 You have ONE tool action available that triggers THREE parallel research tools:
 1. Destination Research — travel guide, places to visit, famous cafes, events, activities.
@@ -130,12 +137,22 @@ The itinerary object MUST strictly match this schema:
 
 Rules:
 - All costs are in INR (₹) per person.
-- Day 1 must include travel from the source city to the destination with specific transport options (bus, train, cab, etc.), estimated travel time, and cost.
-- The last day must include the return journey from destination back to source.
+- Include the journey from the source to the destination and back, with specific transport
+  (bus, train, cab, etc.), travel time and cost.
+- Days at the destination vs travel days:
+  - A trip of N days means N days AT the destination: Day 1 to Day N. Journeys must not eat
+    into them. Example: a 3-day trip is Sat, Sun, Mon in the destination; the group leaves
+    Friday evening and is back Tuesday morning.
+  - Day 0 is the day before Day 1. If the journey out is long (6+ hours), put it on Day 0 so the
+    group arrives by Day 1 morning (e.g. an overnight bus leaving on Day 0 evening). Day 0 holds
+    only the travel out (plus check-in or dinner if they arrive the same day). A short journey
+    can instead be the start of Day 1, with no Day 0.
+  - The way back: an overnight journey leaves on the evening of Day N and arrives the next
+    morning; no extra day is needed. A long daytime journey back goes on Day N+1, the day after
+    Day N, holding only that travel. A short one can end Day N.
+  - So "days" is: optional Day 0, then Day 1 to Day N, then optional Day N+1, numbered in order.
 - Timings:
-  - Days are calendar dates. Day 1 is the date the group leaves the source city, so if they
-    leave in the evening, Day 1 holds little more than getting to the bus/train and the
-    departure. Arrival and check-in belong to the date they actually happen.
+  - Days are calendar dates. Arrival and check-in belong to the date they actually happen.
   - Each day is a "schedule": entries in time order, each with a 24-hour start and end time
     ("06:30", "18:00"). Entries must not overlap.
   - Give every entry a realistic duration: real travel times between places, time to see a
@@ -146,18 +163,17 @@ Rules:
     Never add a separate "arrive" entry.
   - An overnight journey is one entry whose end time is earlier than its start, because it
     arrives the next day. It must be the LAST entry of its day, and the next day's first entry
-    must start at or after its arrival. Example, overnight bus out on Day 1 and back on Day 3:
-      Day 1: {{"start": "18:00", "end": "06:00", "kind": "travel", "activity": "Overnight Volvo Delhi to Manali ..."}}
-      Day 2: {{"start": "06:30", "end": "07:30", "kind": "rest", "activity": "Check in at ..."}}, ...
+    must start at or after its arrival. Example for a 3-day trip, overnight bus both ways:
+      Day 0: {{"start": "18:00", "end": "06:00", "kind": "travel", "activity": "Overnight Volvo Delhi to Manali ..."}}
+      Day 1: {{"start": "06:30", "end": "07:30", "kind": "rest", "activity": "Check in at ..."}}, ...
+      Day 2: ...
       Day 3: ..., {{"start": "17:00", "end": "07:00", "kind": "travel", "activity": "Overnight Volvo Manali to Delhi ..."}}
     On an overnight day, "stay" is the bus or train, not a hotel.
   - Use every day at the destination: on the last day, plan the morning there before the
     return journey (e.g. a sight and lunch before a 17:00 bus).
   - Travel times must add up. If the outbound journey takes about 12 hours, the return does too.
-- The itinerary must cover the FULL trip duration. Never collapse a multi-day trip into a single day, even if some days are light or mostly travel.
-- If the trip duration is N days, the "days" array must contain exactly N objects, with day numbers 1 through N and no gaps.
-- If retrieved data is limited, still produce a complete N-day itinerary using the available evidence plus reasonable planning assumptions.
-- Before finalizing, do a self-check that the number of day entries exactly matches the requested duration. If it does not, revise before responding.
+- The itinerary must cover all N days at the destination. Never collapse a multi-day trip into a single day.
+- If retrieved data is limited, still produce all N days using the available evidence plus reasonable planning assumptions.
 - Include location-specific activities, landmarks, and experiences at the destination.
 - "tradeOffExplanation" must specifically address each group conflict.
 - Never violate any non-negotiable constraint.
@@ -187,18 +203,32 @@ def _timing_preference_rules(trip):
     leave = window_text(trip.get("departurePreference"))
     if leave:
         lines.append(
-            f"- The group wants to LEAVE {source} in the {leave}. Day 1's first travel entry must "
-            "start in that window. Pick the transport that fits (e.g. an overnight bus or train "
-            "for an evening departure on a long route)."
+            f"- The group wants to LEAVE {source} in the {leave}. The trip's first travel entry "
+            "(on Day 0, or Day 1 for a short journey) must start in that window, even if an "
+            "overnight option exists. On a long route: evening means an overnight bus/train on "
+            "Day 0 evening; morning means a day bus/train on Day 0 morning that arrives that "
+            "evening (then check in on Day 0)."
         )
-    back = window_text(trip.get("returnPreference"))
+    destination = trip.get("destination", "the destination")
+    back_pref = trip.get("returnPreference")
+    back = window_text(back_pref)
     if back:
         lines.append(
-            f"- The group wants to ARRIVE BACK in {source} in the {back}. The last travel entry "
-            "on the last day must END in that window. Work backwards from the journey time to "
-            "choose when to leave: on a 12-hour route, a morning arrival means an overnight "
-            "journey the evening before, and an evening arrival means leaving early that morning."
+            f"- The group wants to ARRIVE BACK in {source} in the {back}. The trip's final travel "
+            "entry must END in that window."
         )
+        if back_pref == "morning":
+            lines.append(
+                f"  On a long route: ONE overnight travel entry at the end of Day N, leaving {destination} "
+                "in the evening and arriving the next morning (end earlier than start). No Day N+1."
+            )
+        else:
+            lines.append(
+                f"  On a long route: Day N is a full day in {destination} with NO travel entries (stay = "
+                f"the hotel), and Day N+1 holds ONE daytime travel entry leaving {destination} early in "
+                f"the morning and arriving in {source} in the {back_pref}. Do not take an overnight "
+                "journey home. On a short route, leave on the afternoon/evening of Day N instead."
+            )
     return "".join(line + "\n" for line in lines)
 
 
@@ -256,16 +286,15 @@ Existing Tool Results:
 {json.dumps(state.get("tool_results", {}), indent=2)}
 
 Additional Rules:
-- The "days" array MUST have exactly {duration} entries, numbered 1 to {duration}.
-- Expected day numbers are exactly: {list(range(1, duration + 1)) if isinstance(duration, int) and duration > 0 else f"1 to {duration}"}.
+- The trip is {duration} days at the destination: Day 1 to Day {duration}, plus Day 0 and/or Day {duration + 1 if isinstance(duration, int) else "N+1"} only as travel days when the journey needs them.
 - Never combine multiple trip days into one "day" object.
 - If you are missing details for some middle day, make the best realistic plan you can, but still return all {duration} days.
 - "totalEstimatedCostPerPerson" must not exceed ₹{state["aggregated_data"].get("budget", {}).get("max")}. Aim near ₹{state["aggregated_data"].get("budget", {}).get("recommended")} when the plan genuinely costs that much; a cheaper realistic plan is fine.
 - "totalEstimatedCostPerPerson" is the sum of the days' "estimatedCostPerPerson" (code recomputes it).
 {timing_rules}- Final self-check before responding:
   1. Is "action" set correctly?
-  2. If action is "ITINERARY", does the itinerary include exactly {duration} day objects?
-  3. Do Day 1 and Day {duration} include outbound and return travel respectively?
+  2. If action is "ITINERARY", are Day 1 to Day {duration} all there, as days at the destination?
+  3. Is a long journey out on Day 0 rather than eating Day 1? Is the way back an overnight from Day {duration} or on Day {duration + 1 if isinstance(duration, int) else "N+1"}?
   4. If any answer is no, revise internally before returning JSON.
 
 Decide the NEXT BEST ACTION.{repair_section}
@@ -299,6 +328,9 @@ Decide the NEXT BEST ACTION.{repair_section}
         else:
             state["itinerary"] = parsed["itinerary"]
             _total_from_days(state["itinerary"])
+            dropped = drop_zero_length_entries(state["itinerary"].get("days", []))
+            if dropped:
+                print(f"  🧹 Dropped {dropped} zero-length entr{'y' if dropped == 1 else 'ies'}")
             moved = move_entries_after_overnight(state["itinerary"].get("days", []))
             if moved:
                 print(f"  🌙 Moved {moved} entr{'y' if moved == 1 else 'ies'} that followed an overnight journey to the next day")
